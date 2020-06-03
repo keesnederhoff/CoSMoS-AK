@@ -29,7 +29,8 @@ spinup_time         = 6;                    % in days
 
 %% Several models
 clear his_nc
-his_nc_name{1}       = ['version004\run01_serial\'];
+his_nc_name{1}       = ['version004\run03_ice85\'];
+his_nc_name{2}       = ['version004\run04_icefactor\'];
 
 for uniques = 1:length(his_nc_name)
     
@@ -39,8 +40,13 @@ for uniques = 1:length(his_nc_name)
     %% 1. Retrieve data
     clear data data2
     cd(maindir)
-    his_nc          = ['04_modelruns\', version, '\DFM_OUTPUT_cosmos_ak\cosmos_ak_his.nc'];
-    station_name    = nc_varget(his_nc, 'station_name');
+    try
+        his_nc          = ['04_modelruns\', version, '\DFM_OUTPUT_cosmos_ak\cosmos_ak_his.nc'];
+        station_name    = nc_varget(his_nc, 'station_name');
+    catch
+        his_nc          = ['04_modelruns\', version, '\DFM_OUTPUT_cosmos_ak\cosmos_ak_0000_his.nc'];
+        station_name    = nc_varget(his_nc, 'station_name');
+    end
     
     for ii = 1:length(observations)
         
@@ -68,6 +74,12 @@ for uniques = 1:length(his_nc_name)
             reference_time              = datenum(reference_time, 'yyyy-mm-dd');
             xTMP                        = nc_varget(his_nc, 'time')/3600/24 + reference_time;
             yTMP                        = nc_varget(his_nc, 'waterlevel', [0 idfind-1], [Inf 1]);
+            
+            % TMP -> reduce this so instabilities are not part of the
+            % results
+            %xTMP                        = xTMP(1:end-1000);
+            %yTMP                        = yTMP(1:end-1000);
+
             idwanted_model              = xTMP >= (min(xTMP) + spinup_time) & xTMP <= max(xTMP);
             
             % Retrieve data
