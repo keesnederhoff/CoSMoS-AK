@@ -2,6 +2,7 @@
 % v1.0  Nederhoff   Jun-19
 % v1.1  Nederhoff   May-20
 % v1.2  Nederhof    2020-06-01
+% v1.3  Nederhoff   2020-06-22      applicable with more years
 clear all
 close all
 clc
@@ -15,42 +16,31 @@ load('01_data\waterlevels\coops\observations_refined.mat');
 meter_feet          = 3.28084;
 
 % Settings
-spinup_time         = 6;                    % in days
+spinup_time         = 7;                    % in days
 
-% % Constituents wanted
-% % Get information from t_tide
-% tt              = t_getconsts;
-% names           = tt.name;
-% freqs           = tt.freq;
-% periodwanted    = 360./(1./freqs);
-% daysfull        = 360./periodwanted/(24);
-% atleast10       = find(365./daysfull > 10);
-% names_wanted    = names(atleast10,:);
+% years wanted
+years_wanted        = [2011:2018];
 
 %% Several models
 clear his_nc
-his_nc_name{1}       = ['version004\run03_ice85\'];
-his_nc_name{2}       = ['version004\run04_icefactor\'];
+his_nc_name{1}       = ['version006\normalruns\'];
 
 for uniques = 1:length(his_nc_name)
     
     % Get version for this one
     version             = his_nc_name{uniques};
     
-    %% 1. Retrieve data
+    %% 1. Retrieve data: takes 2 hours
+    tic
     clear data data2
     cd(maindir)
-    try
-        his_nc          = ['04_modelruns\', version, '\DFM_OUTPUT_cosmos_ak\cosmos_ak_his.nc'];
-        station_name    = nc_varget(his_nc, 'station_name');
-    catch
-        his_nc          = ['04_modelruns\', version, '\DFM_OUTPUT_cosmos_ak\cosmos_ak_0000_his.nc'];
-        station_name    = nc_varget(his_nc, 'station_name');
-    end
-    
+    his_nc          = ['04_modelruns\', version, '\results_cluster\', num2str(years_wanted(1)), '\cosmos_ak_his.nc'];
+    station_name    = nc_varget(his_nc, 'station_name');
+
     for ii = 1:length(observations)
         
         % Change name
+        disp(['working on ' num2str(ii), ' of ', num2str(length(observations))]);
         for jj = 1:length(station_name)
             try
                 name_TMP    = station_name(jj,:);
@@ -65,48 +55,51 @@ for uniques = 1:length(his_nc_name)
         
         if ~isempty(idfind)
             
-            % Retrieve model
-            clear xTMP yTMP
-            idfind                      = idfind(2);
-            reference_time              = ncreadatt(his_nc,'time','units');
-            idtime                      = strfind(reference_time, 'since ');
-            reference_time              = reference_time(:,[idtime+6: idtime+15]);
-            reference_time              = datenum(reference_time, 'yyyy-mm-dd');
-            xTMP                        = nc_varget(his_nc, 'time')/3600/24 + reference_time;
-            yTMP                        = nc_varget(his_nc, 'waterlevel', [0 idfind-1], [Inf 1]);
-            
-            % TMP -> reduce this so instabilities are not part of the
-            % results
-            %xTMP                        = xTMP(1:end-1000);
-            %yTMP                        = yTMP(1:end-1000);
-
-            idwanted_model              = xTMP >= (min(xTMP) + spinup_time) & xTMP <= max(xTMP);
-            
-            % Retrieve data
-            idwanted_data               = observations(ii).datetime >= min(xTMP(idwanted_model)) & observations(ii).datetime <= max(xTMP(idwanted_model));
-            
             % Save data
             data(ii).IDcode             = observations(ii).IDcode;
             data(ii).Name               = observations(ii).Name;
             data(ii).lat                = observations(ii).y;
-            
-            data(ii).obs.datetime       = observations(ii).datetime(idwanted_data);
-            data(ii).obs.waterlevel     = observations(ii).waterlevel(idwanted_data);
-            data(ii).obs.coef_full      = observations(ii).coef;
-            
-            % Model
-            data(ii).model.datetime     = data(ii).obs.datetime;
-            data(ii).model.waterlevel   = interpolation_wavetimeseries(xTMP, yTMP, data(ii).model.datetime, (1/24));    % interpolate model to observation (no extrapolation)
+            data(ii).model.datetime     = [];
+            data(ii).model.waterlevel   = [];
             data(ii).model.x            = nc_varget(his_nc, 'station_x_coordinate', [idfind-1], [1]);
             data(ii).model.y            = nc_varget(his_nc, 'station_y_coordinate', [idfind-1], [1]);
             
-            % Error computation
+            % Get data of other years
+            for yr = 1:length(years_wanted)
+                
+                % Define new his file
+                clear xTMP yTMP
+                his_nc                      = ['04_modelruns\', version, '\results_cluster\', num2str(years_wanted(yr)), '\cosmos_ak_his.nc'];
+                reference_time              = ncreadatt(his_nc,'time','units');
+                idtime                      = strfind(reference_time, 'since ');
+                reference_time              = reference_time(:,[idtime+6: idtime+15]);
+                reference_time              = datenum(reference_time, 'yyyy-mm-dd');
+                xTMP                        = nc_varget(his_nc, 'time')/3600/24 + reference_time;
+                yTMP                        = nc_varget(his_nc, 'waterlevel', [0 idfind-1], [Inf 1]);
+                idwanted_model              = xTMP >= (min(xTMP) + spinup_time) & xTMP <= max(xTMP);
+
+                % Model
+                data(ii).model.datetime     = [data(ii).model.datetime  xTMP(idwanted_model)'];
+                data(ii).model.waterlevel   = [data(ii).model.waterlevel  yTMP(idwanted_model)'];
+            end
+       
+            % Retrieve data
+            idwanted_data               = observations(ii).datetime >= min(data(ii).model.datetime) & observations(ii).datetime <= max(data(ii).model.datetime);
+            data(ii).obs.datetime       = observations(ii).datetime(idwanted_data);
+            data(ii).obs.waterlevel     = observations(ii).waterlevel(idwanted_data);
+            data(ii).obs.coef_full      = observations(ii).coef;
+
+            % Interpolate model results to same datetime as observed
+            data(ii).model.waterlevel   = interpolation_wavetimeseries(data(ii).model.datetime, data(ii).model.waterlevel, data(ii).obs.datetime, (2/24));
+            data(ii).model.datetime     = data(ii).obs.datetime;
+            
+            % Skill score
             [stat]                      = model_skill2(data(ii).obs.waterlevel, data(ii).model.waterlevel, data(ii).model.waterlevel);
             data(ii).model.skill        = stat;
             
             % Tide analysis
             % Model
-            if ~isempty(data(ii).model.datetime) || ~isnan(nanmean(data(ii).model.waterlevel));
+            if ~isempty(data(ii).model.datetime) || ~isnan(nanmean(data(ii).model.waterlevel))
                 
                 % Determine tide and NTR on small subset
                 coef                        = ut_solv(data(ii).model.datetime, data(ii).model.waterlevel, [],  data(ii).lat , 'auto', 'LinCI', 'OLS', 'White');
@@ -116,18 +109,19 @@ for uniques = 1:length(his_nc_name)
                 data(ii).model.tide         = data(ii).model.tide;
                 for xx = 1:3
                     if xx == 1
-                        ntr  = data(ii).model.waterlevel -  data(ii).model.tide'; jdf = data(ii).model.datetime;
+                        ntr                                     = data(ii).model.waterlevel -  data(ii).model.tide'; 
+                        jdf                                     = data(ii).model.datetime;
                     end
                     if xx == 2 & length(data(ii).model.datetime) > 2000
-                        [ntr, jdf]                      = cmglowpass(data(ii).model.waterlevel, 360, data(ii).model.datetime,(1/24),'osu');
+                        [ntr, jdf]                              = cmglowpass(data(ii).model.waterlevel, 360, data(ii).model.datetime,(1/24),'osu');
                     end
                     if xx == 3
-                        dtwanted_1  = (1/24/6); dtwanted_2 = 1/dtwanted_1;
-                        xTMP                    = nanmin(data(ii).model.datetime):dtwanted_1:nanmax(data(ii).model.datetime);
-                        yTMP                    = interp1(data(ii).model.datetime, data(ii).model.waterlevel, xTMP);
-                        yTMP_smooth             = smoothdata(yTMP, 'movmean', dtwanted_2);
-                        ntr                     = yTMP_smooth;
-                        jdf                     = xTMP;
+                        dtwanted_1                              = (1/24/6); dtwanted_2 = 1/dtwanted_1;
+                        xTMP                                    = nanmin(data(ii).model.datetime):dtwanted_1:nanmax(data(ii).model.datetime);
+                        yTMP                                    = interp1(data(ii).model.datetime, data(ii).model.waterlevel, xTMP);
+                        yTMP_smooth                             = smoothdata(yTMP, 'movmean', dtwanted_2, 'includenan');
+                        ntr                                     = yTMP_smooth;
+                        jdf                                     = xTMP;
                     end
                     data(ii).model.NTR(xx).values               = ntr;
                     data(ii).model.NTR(xx).datetime             = jdf;
@@ -141,20 +135,20 @@ for uniques = 1:length(his_nc_name)
                 data(ii).obs.tide           = data(ii).obs.tide;
                 for xx = 1:3
                     if xx == 1
-                        ntr                             = data(ii).obs.waterlevel -  data(ii).obs.tide'; jdf = data(ii).obs.datetime;
+                        ntr                             = data(ii).obs.waterlevel -  data(ii).obs.tide'; 
+                        jdf                             = data(ii).obs.datetime;
                     end
                     if xx == 2 & length(data(ii).obs.datetime) > 2000
                         [ntr, jdf]                      = cmglowpass(data(ii).obs.waterlevel, 360, data(ii).obs.datetime,(1/24),'osu');
                     end
                     if xx == 3
-                        dtwanted_1  = (1/24/6); dtwanted_2 = 1/dtwanted_1;
+                        dtwanted_1              = (1/24/6); dtwanted_2 = 1/dtwanted_1;
                         xTMP                    = nanmin(data(ii).obs.datetime):dtwanted_1:nanmax(data(ii).obs.datetime);
                         yTMP                    = interp1(data(ii).obs.datetime, data(ii).obs.waterlevel, xTMP);
-                        yTMP_smooth             = smoothdata(yTMP, 'movmean', dtwanted_2);
+                        yTMP_smooth             = smoothdata(yTMP, 'movmean', dtwanted_2, 'includenan');    % daily averaged
                         ntr                     = yTMP_smooth;
                         jdf                     = xTMP;
                     end
-                    
                     data(ii).obs.NTR(xx).values                 = ntr;
                     data(ii).obs.NTR(xx).datetime               = jdf;
                 end
@@ -162,14 +156,15 @@ for uniques = 1:length(his_nc_name)
                 % Compute skill of tide and NTR
                 [stat]                      = model_skill2(data(ii).obs.tide, data(ii).model.tide, data(ii).model.tide);
                 data(ii).model.skill_tide   = stat;
-                for xx = 1:2
+                for xx = 1:3
                     [stat]                      = model_skill2(data(ii).obs.NTR(xx).values, data(ii).model.NTR(xx).values, data(ii).obs.NTR(xx).values);
                     data(ii).model.skill_NTR(xx)= stat;
                 end
             end
         end
     end
-    
+    toc
+
     % Only continue with non-nan
     clear idnotnan
     for ii = 1:length(data)
@@ -204,7 +199,7 @@ for uniques = 1:length(his_nc_name)
             
             %%  Tidal comparison
             close all
-            Y = 29.7/2;   X = 21.0;
+            Y = 29.7/3;   X = 21.0;
             xSize = X - 2*0.5;   ySize = Y - 2*0.5; % figure size on paper (width & height)
             hFig = figure('Visible','Off');
             hold on;
@@ -214,50 +209,72 @@ for uniques = 1:length(his_nc_name)
             set(hFig, 'PaperOrientation','portrait');
             
             % Components
-            components_wanted = {'M2';'O1';'SSA';'S2';'K1'; 'N2'; 'S1'; 'P1'; 'M1'};       % 10 largest based on long record
+            components_wanted = data(ii).obs.coef_full.name;
+            components_wanted = components_wanted(1:10);
             for jj = 1:length(components_wanted)
                 
                 % Find matching onces for model
                 idwanted                  = strmatch(components_wanted{jj},data(ii).model.coef.name,'exact');
                 if ~isempty(idwanted)
                     amps(ii, 2,jj)  = data(ii).model.coef.A(idwanted);
+                    ampslow(ii,2,jj)= data(ii).model.coef.A_ci(idwanted);
                     phis(ii,2,jj)   = data(ii).model.coef.g(idwanted);
+                    phislow(ii,2,jj)= data(ii).model.coef.g_ci(idwanted);
                 end
                 
                 % Find matching onces for observation
                 idwanted                  = strmatch(components_wanted{jj},data(ii).obs.coef.name,'exact');
                 if ~isempty(idwanted)
                     amps(ii, 1,jj)  = data(ii).obs.coef.A(idwanted);
+                    ampslow(ii,1,jj)= data(ii).obs.coef.A_ci(idwanted);
                     phis(ii,1,jj)   = data(ii).obs.coef.g(idwanted);
+                    phislow(ii,1,jj)= data(ii).obs.coef.g_ci(idwanted);
                 end
             end
             amp_TMP = squeeze(amps(ii,:,:));
             phi_TMP = squeeze(phis(ii,:,:));
-            
-            
+            amp_err = squeeze(ampslow(ii,:,:));
+            phi_err = squeeze(phislow(ii,:,:));
+
             sub1 = subplot(2,1,1); hold on;
             hbar = bar(amp_TMP'); title([data(ii).Name, ' - ' , data(ii).IDcode]);
-            set(hbar(1), 'FaceColor', Cliner(1,:));
-            set(hbar(2), 'FaceColor', Cliner(2,:));
-            legend('observed', 'modelled', 'orientation', 'horizontal')
+            set(hbar(1), 'FaceColor', Cliner(1,:), 'edgecolor','none')
+            set(hbar(2), 'FaceColor', Cliner(2,:), 'edgecolor','none')
             set(sub1, 'xticklabel', '');
             box on; ylabel('tidal amplitude [meter]')
+
+            % Get errors
+            x = [];
+            for i = 1:2
+                x = [x ; hbar(i).XEndPoints];
+            end
+            errorbar(x',amp_TMP',(amp_err*1)','k','linestyle','none')
             
+            legend('observed', 'modelled', '95% confidence intervals', 'orientation', 'horizontal')
+            sub1.YLim = sub1.YLim*1.1;
+
+            % Get phase
             yyaxis right
             ylabel(['tidal amplitude [feet]'])
             sub1.YAxis(2).Limits        = sub1.YAxis(1).Limits * meter_feet;
             sub1.YAxis(2).Color         = 'k';
             grid on; box on;
-            
-            
             sub2 = subplot(2,1,2); hold on;
             hbar = bar(phi_TMP');
-            set(hbar(1), 'FaceColor', Cliner(1,:));
-            set(hbar(2), 'FaceColor', Cliner(2,:));
+            set(hbar(1), 'FaceColor', Cliner(1,:), 'edgecolor','none')
+            set(hbar(2), 'FaceColor', Cliner(2,:), 'edgecolor','none')
             set(sub2, 'xticklabel', components_wanted);
             box on; ylabel('tidal amplitude [degrees]')
             grid on; box on;
             
+            % Get errors
+            x = [];
+            for i = 1:2
+                x = [x ; hbar(i).XEndPoints];
+            end
+            errorbar(x',phi_TMP',(phi_err*1)','k','linestyle','none')
+            ylim([0 360])
+           
             figure_png = ['tide', data(ii).IDcode, '.png'];
             print('-dpng','-r300',figure_png); close all
             
@@ -266,14 +283,11 @@ for uniques = 1:length(his_nc_name)
                 
                 % Create frame
                 if ijn == 1
-                    
                     xwanted     = round(median(data(ii).obs.datetime));
                     xwanted     = [xwanted xwanted+7];
                     figure_png  = ['timeseries_random_', data(ii).IDcode, '.png'];
                     
                 elseif ijn == 2
-                    
-                    % Filter in time
                     idmax       = find(max(data(ii).obs.waterlevel) == data(ii).obs.waterlevel); idmax = idmax(1);
                     idmax2      = find(data(ii).obs.datetime >= data(ii).obs.datetime(idmax)-3.5  & data(ii).obs.datetime <= data(ii).obs.datetime(idmax)+3.5);
                     xwanted     = [data(ii).obs.datetime(idmax)-3.5 data(ii).obs.datetime(idmax)+3.5];
@@ -313,8 +327,8 @@ for uniques = 1:length(his_nc_name)
                 % Time frame
                 box on;
                 hlegend  = legend([hplot], 'observed', 'modelled', 'tide', 'orientation', 'horizontal', 'location', 'southoutside');
-                datetick('x','mmm/dd', 'keeplimits');
-                
+                datetick('x','yyyy/mm/dd', 'keeplimits');
+
                 if diff(sub1.YAxis(1).Limits) < 10
                     sub1.YAxis(2).Limits        = sub1.YAxis(1).Limits * meter_feet;
                     sub1.YAxis(2).Color         = 'k';
@@ -324,6 +338,15 @@ for uniques = 1:length(his_nc_name)
                 print('-dpng','-r300',figure_png);
                 close all
             end
+%             
+%             %% QQ-plot
+%             addpath('c:\Matlab\personal\IoSR-Surrey-MatlabToolbox-4bff1bb\')
+%             iosr.install
+%             
+%             close all
+%             figure; hold on;
+%             idwanted = ~isnan(data(ii).obs.waterlevel) & ~isnan(data(ii).model.waterlevel);
+%             iosr.statistics.qqPlot([data(ii).obs.waterlevel(idwanted); data(ii).model.waterlevel(idwanted)]','both')
             
             %% Plot with fading
             Y = 29.7/2;   X = 21.0;
@@ -334,16 +357,14 @@ for uniques = 1:length(his_nc_name)
             set(hFig, 'PaperSize',[X Y]);
             set(hFig, 'PaperPosition',[0.5 0.5 xSize ySize]);
             set(hFig, 'PaperOrientation','portrait');
-            
             hplot = scatter(data(ii).obs.waterlevel*1, data(ii).model.waterlevel*1, 'filled');
             set(hplot, 'Cdata', Cliner(3,:));    set(hplot, 'MarkerFaceAlpha', 0.05);
-            
             hplot = plot([min(data(ii).obs.waterlevel)*1 max(data(ii).obs.waterlevel)*1], [min(data(ii).obs.waterlevel)*1 max(data(ii).obs.waterlevel)*1], '-k');
             xlim([min(data(ii).obs.waterlevel)*1 max(data(ii).obs.waterlevel)*1]);
             ylim([min(data(ii).obs.waterlevel)*1 max(data(ii).obs.waterlevel)*1])
             title([data(ii).Name, ' - ' , data(ii).IDcode]);
-            xlabel('water level observed [ft + NAVD88]');
-            ylabel('water level measured [ft + NAVD88]');
+            xlabel('water level observed [m + MSL]');
+            ylabel('water level measured [m + MSL]');
             htext1 = ['MAE_u: ', num2str( round(data(ii).model.skill.umae*1*100)/100), ' meter'];
             htext2 = ['bias: ', num2str( round(data(ii).model.skill.bias*1*100)/100), ' meter'];
             htext3 = ['RMSE: ', num2str( round(data(ii).model.skill.rmse*1*100)/100), ' meter'];
@@ -359,7 +380,7 @@ for uniques = 1:length(his_nc_name)
             close all
             Y = 29.7/3;   X = 21.0;
             xSize = X - 2*0.5;   ySize = Y - 2*0.5; % figure size on paper (width & height)
-            hFig = figure('Visible','Off');
+            hFig = figure%('Visible','Off');
             hold on;
             set(hFig, 'PaperUnits','centimeters');
             set(hFig, 'PaperSize',[X Y]);
@@ -370,9 +391,9 @@ for uniques = 1:length(his_nc_name)
             %hplot = plot(boundary.in.time, boundary.in.wl*-1, '-k');
             error1 = data(ii).obs.waterlevel-data(ii).model.waterlevel;
             if median(diff(data(ii).obs.datetime)*24) < 0.5
-                error2 = fastsmooth(error1,24*10,1,1);
+                error2 = smoothdata(error1,'movmean', round(1/median(diff(data(ii).obs.datetime))), 'includenan');
             else
-                error2 = fastsmooth(error1,24,1,1);
+                error2 = smoothdata(error1,'movmean', round(1/median(diff(data(ii).obs.datetime))), 'includenan');
             end
             minerror = min(error1);
             maxerror = max(error1);
@@ -431,7 +452,7 @@ for uniques = 1:length(his_nc_name)
                 % Time frame
                 box on;
                 hlegend  = legend(hplot,'observed', 'modelled', 'orientation', 'horizontal', 'location', 'southoutside');
-                datetick('x','mmm/dd', 'keeplimits');
+                datetick('x','yyyy/mm/dd', 'keeplimits');
                 
                 sub1.YAxis(2).Limits        = sub1.YAxis(1).Limits * meter_feet;
                 sub1.YAxis(2).Color         = 'k';
@@ -445,7 +466,7 @@ for uniques = 1:length(his_nc_name)
             
             %% Make 1 overview plot
             close all;
-            Y = 29.7/2;   X = 21.0;
+            Y = 29.7/3;   X = 21.0;
             xSize = X - 2*0.5;   ySize = Y - 2*0.5; % figure size on paper (width & height)
             hFig = figure('Visible','Off'); hold on;
             set(hFig, 'PaperUnits','centimeters');
@@ -454,7 +475,7 @@ for uniques = 1:length(his_nc_name)
             set(hFig, 'PaperOrientation','portrait');
             
             % Total
-            fname_title = [data(ii).Name, ' - ' , data(ii).IDcode, ' - ' , num2str(year(data(ii).model.datetime(end)))];
+            fname_title = [data(ii).Name, ' - ' , data(ii).IDcode];
             sub1 = subplot(3,3,1); hold on;
             clear hplot
             hplot(2) = plot(data(ii).model.datetime, data(ii).model.waterlevel);
@@ -465,9 +486,9 @@ for uniques = 1:length(his_nc_name)
             xwanted  = [xwanted xwanted+7];
             axis tight;  xlim([xwanted]);
             datetick('x', 'mmm/dd', 'keeplimits');
-            ylabel('elevation [NAVD88 +m]');
+            ylabel('elevation [MSL+m]');
             box on; grid on;        title(fname_title);
-            htext1 = ['RMSEu: ' num2str(data(ii).model.skill.rmse*100,'%.1f'), ' [cm]'];
+            htext1 = ['RMSE: ' num2str(data(ii).model.skill.rmse*100,'%.1f'), ' [cm]'];
             htext2 = ['MAEu: ' num2str(data(ii).model.skill.umae*100,'%.1f'), ' [cm]'];
             htext3 = ['SCI: ' num2str(data(ii).model.skill.sci*100,'%.1f'), ' [%]'];
             text(0.1, 0.9, htext1, 'sc', 'Fontsize', 8);
@@ -498,9 +519,9 @@ for uniques = 1:length(his_nc_name)
             set(hplot(1), 'Color', Cliner(1,:), 'linewidth', 1.5);
             set(hplot(2), 'Color', Cliner(2,:), 'linewidth', 1.5);
             datetick('x', 'mmm/dd', 'keeplimits');
-            ylabel('elevation [NAVD88 +m]');
+            ylabel('elevation [MSL+m]');
             box on; grid on; axis tight
-            htext1 = ['RMSEu: ' num2str(data(ii).model.skill_NTR(end).rmse*100,'%.1f'), ' [cm]'];
+            htext1 = ['RMSE: ' num2str(data(ii).model.skill_NTR(end).rmse*100,'%.1f'), ' [cm]'];
             htext2 = ['MAEu: ' num2str(data(ii).model.skill_NTR(end).umae*100,'%.1f'), ' [cm]'];
             htext3 = ['SCI: ' num2str(data(ii).model.skill_NTR(end).sci*100,'%.1f'), ' [%]'];
             text(0.1, 0.9, htext1, 'sc', 'Fontsize', 8);
@@ -509,9 +530,17 @@ for uniques = 1:length(his_nc_name)
             legend('modeled', 'observed',' location', 'best');
             sub3.XAxis.TickValues = linspace(sub3.XAxis.Limits(1), sub3.XAxis.Limits(2), 8);
             for qaz = 1:length(sub3.XAxis.TickValues)
-                wanted{qaz} = datestr(sub3.XAxis.TickValues(qaz), 'mmm/dd');
+                wanted{qaz} = datestr(sub3.XAxis.TickValues(qaz), 'yyyy/mm/dd');
             end
             set(sub3, 'xticklabel', wanted)
+            
+            yearswanted   = year(min(data(ii).model.NTR(2).datetime)):year(max(data(ii).model.NTR(2).datetime));
+            for yr = 1:length(yearswanted)
+                xwanted_loc(yr) = datenum(yearswanted(yr),1,1);
+                xwanted_tick{yr}= datestr(xwanted_loc(yr), 'yyyy/mm/dd');
+            end
+            set(sub3, 'xtick', xwanted_loc, 'xticklabel', xwanted_tick)
+
             
             % Where is this?
             Gnetwork = dflowfm.readNet('q:\Projects\Alaska\CoMoS_AK\04_modelruns\version002\meshes\ak_Liv_net.nc');
@@ -559,6 +588,7 @@ for uniques = 1:length(his_nc_name)
             end
             figure_png = ['overview_', data(ii).IDcode, '.png'];
             print('-dpng','-r300',figure_png); close all
+            
         catch
             disp(['something went wrong with ' data(ii).IDcode])
         end
@@ -648,5 +678,15 @@ for uniques = 1:length(his_nc_name)
         xlswrite('skill.xls', writing);
     end
     save('results.mat', 'data');
+    
+    
+    % Make KML with names
+    for xx = 1:length(data)
+        lon(xx)     = data(xx).model.x;
+        lat(xx)     = data(xx).model.y;
+        name{xx}    = [data(xx).Name ' - ', data(xx).IDcode];
+    end
+    KMLtext(lat,lon,name,'fileName','locations.kml');
+
 end
 disp('done!')
