@@ -1,5 +1,4 @@
-%% Get all CO-OPS data: water level for SFB
-% work only in Matlab 2013!
+%% USGS CoSMoS-AK: compare coops based observations compared to FES
 % v1.0  Nederhoff   Jan-19
 % v1.1  Nederhoff   Jun-19
 % v1.2  Nederhoff   2020-06-01
@@ -9,7 +8,7 @@ clc
 
 %% Load data
 load('q:\Projects\Alaska\CoMoS_AK\01_data\waterlevels\coops\observations_refined.mat');
-destout     = 'q:\Projects\Alaska\CoMoS_AK\02_data_analysis\waterlevels\coops\';
+destout     = 'q:\Projects\Alaska\CoMoS_AK\02_data_analysis\waterlevels\FES\';
 
 %% 4. Restructuring data and do basic tidal analysis
 % Not needed anymore

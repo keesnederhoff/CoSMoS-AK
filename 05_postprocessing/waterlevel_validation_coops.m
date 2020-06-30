@@ -3,6 +3,7 @@
 % v1.1  Nederhoff   May-20
 % v1.2  Nederhof    2020-06-01
 % v1.3  Nederhoff   2020-06-22      applicable with more years
+% v1.4  Nederhoff   2020-06-29      applicable when more than 1 location in obs
 clear all
 close all
 clc
@@ -19,11 +20,11 @@ meter_feet          = 3.28084;
 spinup_time         = 7;                    % in days
 
 % years wanted
-years_wanted        = [2011:2018];
+years_wanted        = [2018];
 
 %% Several models
 clear his_nc
-his_nc_name{1}       = ['version006\normalruns\'];
+his_nc_name{1}       = ['version007\results_cluster\attempA_20200625\'];
 
 for uniques = 1:length(his_nc_name)
     
@@ -34,7 +35,7 @@ for uniques = 1:length(his_nc_name)
     tic
     clear data data2
     cd(maindir)
-    his_nc          = ['04_modelruns\', version, '\results_cluster\', num2str(years_wanted(1)), '\cosmos_ak_his.nc'];
+    his_nc          = ['04_modelruns\', version, num2str(years_wanted(1)), '\cosmos_ak_his.nc'];
     station_name    = nc_varget(his_nc, 'station_name');
 
     for ii = 1:length(observations)
@@ -56,46 +57,62 @@ for uniques = 1:length(his_nc_name)
         if ~isempty(idfind)
             
             % Save data
-            data(ii).IDcode             = observations(ii).IDcode;
-            data(ii).Name               = observations(ii).Name;
-            data(ii).lat                = observations(ii).y;
-            data(ii).model.datetime     = [];
-            data(ii).model.waterlevel   = [];
-            data(ii).model.x            = nc_varget(his_nc, 'station_x_coordinate', [idfind-1], [1]);
-            data(ii).model.y            = nc_varget(his_nc, 'station_y_coordinate', [idfind-1], [1]);
-            
-            % Get data of other years
-            for yr = 1:length(years_wanted)
+            for qq = 1:length(idfind)
                 
-                % Define new his file
-                clear xTMP yTMP
-                his_nc                      = ['04_modelruns\', version, '\results_cluster\', num2str(years_wanted(yr)), '\cosmos_ak_his.nc'];
-                reference_time              = ncreadatt(his_nc,'time','units');
-                idtime                      = strfind(reference_time, 'since ');
-                reference_time              = reference_time(:,[idtime+6: idtime+15]);
-                reference_time              = datenum(reference_time, 'yyyy-mm-dd');
-                xTMP                        = nc_varget(his_nc, 'time')/3600/24 + reference_time;
-                yTMP                        = nc_varget(his_nc, 'waterlevel', [0 idfind-1], [Inf 1]);
-                idwanted_model              = xTMP >= (min(xTMP) + spinup_time) & xTMP <= max(xTMP);
-
-                % Model
-                data(ii).model.datetime     = [data(ii).model.datetime  xTMP(idwanted_model)'];
-                data(ii).model.waterlevel   = [data(ii).model.waterlevel  yTMP(idwanted_model)'];
-            end
-       
-            % Retrieve data
-            idwanted_data               = observations(ii).datetime >= min(data(ii).model.datetime) & observations(ii).datetime <= max(data(ii).model.datetime);
-            data(ii).obs.datetime       = observations(ii).datetime(idwanted_data);
-            data(ii).obs.waterlevel     = observations(ii).waterlevel(idwanted_data);
-            data(ii).obs.coef_full      = observations(ii).coef;
-
-            % Interpolate model results to same datetime as observed
-            data(ii).model.waterlevel   = interpolation_wavetimeseries(data(ii).model.datetime, data(ii).model.waterlevel, data(ii).obs.datetime, (2/24));
-            data(ii).model.datetime     = data(ii).obs.datetime;
+                % Go get header
+                idfindnow                           = idfind(qq);
+                data(ii).IDcode                     = observations(ii).IDcode;
+                data(ii).Name                       = observations(ii).Name;
+                data(ii).lat                        = observations(ii).y;
+                data(ii).model(qq).datetime         = [];
+                data(ii).model(qq).waterlevel       = [];
+                data(ii).model(qq).x                = nc_varget(his_nc, 'station_x_coordinate', [idfindnow-1], [1]);
+                data(ii).model(qq).y                = nc_varget(his_nc, 'station_y_coordinate', [idfindnow-1], [1]);
             
-            % Skill score
-            [stat]                      = model_skill2(data(ii).obs.waterlevel, data(ii).model.waterlevel, data(ii).model.waterlevel);
-            data(ii).model.skill        = stat;
+                % Get data of other years
+                for yr = 1:length(years_wanted)
+
+                    % Define new his file
+                    clear xTMP yTMP
+                    his_nc                          = ['04_modelruns\', version, num2str(years_wanted(yr)), '\cosmos_ak_his.nc'];
+                    reference_time                  = ncreadatt(his_nc,'time','units');
+                    idtime                          = strfind(reference_time, 'since ');
+                    reference_time                  = reference_time(:,[idtime+6: idtime+15]);
+                    reference_time                  = datenum(reference_time, 'yyyy-mm-dd');
+                    xTMP                            = nc_varget(his_nc, 'time')/3600/24 + reference_time;
+                    yTMP                            = nc_varget(his_nc, 'waterlevel', [0 idfindnow-1], [Inf 1]);
+                    idwanted_model                  = xTMP >= (min(xTMP) + spinup_time) & xTMP <= max(xTMP);
+
+                    % Model
+                    data(ii).model(qq).datetime     = [data(ii).model(qq).datetime      xTMP(idwanted_model)'];
+                    data(ii).model(qq).waterlevel   = [data(ii).model(qq).waterlevel    yTMP(idwanted_model)'];
+                end
+       
+                % Retrieve data
+                idwanted_data                   = observations(ii).datetime >= min(data(ii).model(qq).datetime) & observations(ii).datetime <= max(data(ii).model(qq).datetime);
+                data(ii).obs.datetime           = observations(ii).datetime(idwanted_data);
+                data(ii).obs.waterlevel         = observations(ii).waterlevel(idwanted_data);
+                data(ii).obs.coef_full          = observations(ii).coef;
+
+                % Interpolate model results to same datetime as observed
+                data(ii).model(qq).waterlevel   = interpolation_wavetimeseries(data(ii).model(qq).datetime, data(ii).model(qq).waterlevel, data(ii).obs.datetime, (2/24));
+                data(ii).model(qq).datetime     = data(ii).obs.datetime;
+
+                % Skill score
+                [stat]                          = model_skill2(data(ii).obs.waterlevel, data(ii).model(qq).waterlevel, data(ii).model(qq).waterlevel);
+                data(ii).model(qq).skill        = stat;
+            end
+            
+            % When we had more than one location - we use the one with the lowest RMSE
+            if qq > 1
+                rmse_found          = [];
+                for qq = 1:length(data(ii).model)
+                    rmse_found(qq)      = [data(ii).model(qq).skill.rmse];
+                end
+                idfind              = find(rmse_found == min(rmse_found));
+                data(ii).model      = data(ii).model(idfind);
+            end
+            
             
             % Tide analysis
             % Model
