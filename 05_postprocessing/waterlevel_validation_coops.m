@@ -24,7 +24,7 @@ years_wanted        = [2018];
 
 %% Several models
 clear his_nc
-his_nc_name{1}       = ['version007\results_cluster\attempA_20200625\'];
+his_nc_name{1}       = ['version007\results_cluster\attempt2_20200631_updatedcor\'];
 
 for uniques = 1:length(his_nc_name)
     
@@ -37,6 +37,7 @@ for uniques = 1:length(his_nc_name)
     cd(maindir)
     his_nc          = ['04_modelruns\', version, num2str(years_wanted(1)), '\cosmos_ak_his.nc'];
     station_name    = nc_varget(his_nc, 'station_name');
+    determine_ice   = 1;
 
     for ii = 1:length(observations)
         
@@ -60,6 +61,7 @@ for uniques = 1:length(his_nc_name)
             for qq = 1:length(idfind)
                 
                 % Go get header
+                cd(maindir)
                 idfindnow                           = idfind(qq);
                 data(ii).IDcode                     = observations(ii).IDcode;
                 data(ii).Name                       = observations(ii).Name;
@@ -93,6 +95,13 @@ for uniques = 1:length(his_nc_name)
                 data(ii).obs.datetime           = observations(ii).datetime(idwanted_data);
                 data(ii).obs.waterlevel         = observations(ii).waterlevel(idwanted_data);
                 data(ii).obs.coef_full          = observations(ii).coef;
+                
+                % Smooth 6 minute water level to hourly -> get some of the flocculations stuff out
+                if length(data(ii).obs.datetime)>100
+                    dt                              = nanmedian(diff(data(ii).obs.datetime));
+                    dt_wanted                       = round(1/24 / dt);
+                    data(ii).obs.waterlevel         = movmean(data(ii).obs.waterlevel, dt_wanted);
+                end
 
                 % Interpolate model results to same datetime as observed
                 data(ii).model(qq).waterlevel   = interpolation_wavetimeseries(data(ii).model(qq).datetime, data(ii).model(qq).waterlevel, data(ii).obs.datetime, (2/24));
@@ -113,6 +122,39 @@ for uniques = 1:length(his_nc_name)
                 data(ii).model      = data(ii).model(idfind);
             end
             
+            % Get matching ice concentrations
+            if ~isempty(data(ii).obs.datetime)
+                yearswanted             = unique(year(data(ii).obs.datetime));
+                ice.time                = [];
+                ice.value               = [];
+                for yr = 1:length(yearswanted)
+
+                    % Get all data
+                    cd('q:\Projects\Alaska\CoMoS_AK\01_data\ERA5\')
+                    filename                    = ['ERA5_meteo', num2str(yearswanted(yr)), '.nc'];
+                    longitude                   = nc_varget(filename, 'longitude');
+                    latitude                    = nc_varget(filename, 'latitude');
+                    [longitude,latitude]        = meshgrid(longitude,latitude);
+                    siconc                      = nc_varget(filename, 'siconc', [0 0 0], [1 Inf Inf]);
+                    idwanted                    = isnan(siconc);
+                    longitude(idwanted)         = NaN;
+                    latitude(idwanted)          = NaN;
+                    [index, distance, twoout]   = nearxy(longitude, latitude, data(ii).model.x, data(ii).model.y);
+
+                    % Save only relevant one
+                    time                        = nc_varget(filename, 'time')/24 + datenum(1900,1,1);
+                    longitude                   = nc_varget(filename, 'longitude', [twoout(2)-1], [1]);
+                    latitude                    = nc_varget(filename, 'latitude', [twoout(1)-1], [1]);
+                    siconc                      = nc_varget(filename, 'siconc', [0 twoout(1)-1 twoout(2)-1], [Inf 1 1]);
+
+                    % Combine
+                    ice.time                    = [ice.time time'];
+                    ice.value                   = [ice.value siconc'];
+                end
+            
+                % Interpolate time series to observations
+                data(ii).obs.ice  = interp1(ice.time, ice.value, data(ii).obs.datetime, 'linear');
+            end
             
             % Tide analysis
             % Model
@@ -176,6 +218,22 @@ for uniques = 1:length(his_nc_name)
                 for xx = 1:3
                     [stat]                      = model_skill2(data(ii).obs.NTR(xx).values, data(ii).model.NTR(xx).values, data(ii).obs.NTR(xx).values);
                     data(ii).model.skill_NTR(xx)= stat;
+                end
+                
+                % Total, ice and non-ice
+                for xx = 1:4
+                    if xx == 1
+                         idwanted   = data(ii).obs.ice  > -1;                                   % meaning all
+                    elseif xx == 2
+                         idwanted   = data(ii).obs.ice  > 0.85;                                 % meaning frozen
+                    elseif xx == 3
+                         idwanted   = data(ii).obs.ice  < 0.85 & data(ii).obs.ice  > 0.05;      % meaning mixed
+                    elseif xx == 4
+                         idwanted   = data(ii).obs.ice  < 0.05;                                 % meaning non-ice
+                    end
+                    [stat]                          = model_skill2(data(ii).obs.waterlevel(idwanted), data(ii).model.waterlevel(idwanted), data(ii).model.waterlevel(idwanted));
+                    data(ii).model.skill(xx)        = stat;
+                    countsteps(xx)                  = stat.count;
                 end
             end
         end
@@ -382,9 +440,9 @@ for uniques = 1:length(his_nc_name)
             title([data(ii).Name, ' - ' , data(ii).IDcode]);
             xlabel('water level observed [m + MSL]');
             ylabel('water level measured [m + MSL]');
-            htext1 = ['MAE_u: ', num2str( round(data(ii).model.skill.umae*1*100)/100), ' meter'];
-            htext2 = ['bias: ', num2str( round(data(ii).model.skill.bias*1*100)/100), ' meter'];
-            htext3 = ['RMSE: ', num2str( round(data(ii).model.skill.rmse*1*100)/100), ' meter'];
+            htext1 = ['MAE_u: ', num2str( round(data(ii).model.skill(1).umae*1*100)/100), ' meter'];
+            htext2 = ['bias: ', num2str( round(data(ii).model.skill(1).bias*1*100)/100), ' meter'];
+            htext3 = ['RMSE: ', num2str( round(data(ii).model.skill(1).rmse*1*100)/100), ' meter'];
             text1  = text(0.1, 0.80, htext1, 'sc');
             text2  = text(0.1, 0.85, htext2, 'sc');
             text3  = text(0.1, 0.90, htext3, 'sc');
@@ -397,7 +455,7 @@ for uniques = 1:length(his_nc_name)
             close all
             Y = 29.7/3;   X = 21.0;
             xSize = X - 2*0.5;   ySize = Y - 2*0.5; % figure size on paper (width & height)
-            hFig = figure%('Visible','Off');
+            hFig = figure('Visible','Off');
             hold on;
             set(hFig, 'PaperUnits','centimeters');
             set(hFig, 'PaperSize',[X Y]);
@@ -505,9 +563,9 @@ for uniques = 1:length(his_nc_name)
             datetick('x', 'mmm/dd', 'keeplimits');
             ylabel('elevation [MSL+m]');
             box on; grid on;        title(fname_title);
-            htext1 = ['RMSE: ' num2str(data(ii).model.skill.rmse*100,'%.1f'), ' [cm]'];
-            htext2 = ['MAEu: ' num2str(data(ii).model.skill.umae*100,'%.1f'), ' [cm]'];
-            htext3 = ['SCI: ' num2str(data(ii).model.skill.sci*100,'%.1f'), ' [%]'];
+            htext1 = ['RMSE: ' num2str(data(ii).model.skill(1).rmse*100,'%.1f'), ' [cm]'];
+            htext2 = ['MAEu: ' num2str(data(ii).model.skill(1).umae*100,'%.1f'), ' [cm]'];
+            htext3 = ['SCI: ' num2str(data(ii).model.skill(1).sci*100,'%.1f'), ' [%]'];
             text(0.1, 0.9, htext1, 'sc', 'Fontsize', 8);
             text(0.4, 0.9, htext2, 'sc', 'Fontsize', 8);
             text(0.7, 0.9, htext3, 'sc', 'Fontsize', 8);
@@ -524,7 +582,7 @@ for uniques = 1:length(his_nc_name)
             hplot = plot([min(data(ii).obs.waterlevel) max(data(ii).obs.waterlevel)], [min(data(ii).obs.waterlevel) max(data(ii).obs.waterlevel)], '-k');
             xlabel('observed [m]');  ylabel('modelled [m]');
             grid on; box on;
-            htext1 = ['R^2: ' num2str(data(ii).model.skill.r2,'%.2f'), ' [-]'];
+            htext1 = ['R^2: ' num2str(data(ii).model.skill(1).r2,'%.2f'), ' [-]'];
             htext2 = ['R^2: ' num2str(data(ii).model.skill_NTR(2).r2,'%.2f'), ' [-]'];
             text(0.05, 0.85, htext1, 'sc', 'color', Cliner(3,:), 'Fontsize', 8);
             text(0.60, 0.1, htext2, 'sc', 'color', Cliner(4,:), 'Fontsize', 8);
@@ -648,40 +706,42 @@ for uniques = 1:length(his_nc_name)
     %         print('-dpng','-r300',figure_png); close all
     
     %% 4. Skill scores
-    clear writing
+    clear writing bias
     for jj = 1:length(data)
         writing{jj+1,1} = data(jj).IDcode;
         writing{jj+1,2} = data(jj).Name;
-        
         try
-            writing{jj+1,3} = num2str(data(jj).model.skill.rmse*100, '%2.1f');
-            writing{jj+1,4} = num2str(data(jj).model.skill.urmse*100, '%2.1f');
-            writing{jj+1,6} = num2str(data(jj).model.skill_NTR(1).rmse*100, '%2.1f');
-            writing{jj+1,7} = num2str(data(jj).model.skill_NTR(2).rmse*100, '%2.1f');
-            writing{jj+1,8} = num2str(data(jj).model.skill_HW.rmse*100, '%2.1f');
-            writing{jj+1,9} = num2str(data(jj).model.skill_waterlevelMSL.rmse*100, '%2.1f');
-            writing{jj+1,10} = num2str(data(jj).model.skill.mae*100, '%2.1f');
-            writing{jj+1,11} = num2str(data(jj).model.skill.bias*100, '%2.1f');
+            
+            % With ice
+            writing{jj+1,3} = num2str(data(jj).model.skill(1).rmse*100, '%2.1f');
+            writing{jj+1,4} = num2str(data(jj).model.skill(1).mae*100, '%2.1f');
+            writing{jj+1,5} = num2str(data(jj).model.skill(1).bias*100, '%2.1f');
+            bias(jj)        = data(jj).model.skill(1).bias;
+
+            % With ice
+            writing{jj+1,6} = num2str(data(jj).model.skill(2).rmse*100, '%2.1f');
+            writing{jj+1,7} = num2str(data(jj).model.skill(2).mae*100, '%2.1f');
+            writing{jj+1,8} = num2str(data(jj).model.skill(2).bias*100, '%2.1f');
+            
+            % With ice
+            writing{jj+1,9} = num2str(data(jj).model.skill(3).rmse*100, '%2.1f');
+            writing{jj+1,10} = num2str(data(jj).model.skill(3).mae*100, '%2.1f');
+            writing{jj+1,11} = num2str(data(jj).model.skill(3).bias*100, '%2.1f');
+            
+            % With ice
+            writing{jj+1,12} = num2str(data(jj).model.skill(4).rmse*100, '%2.1f');
+            writing{jj+1,13} = num2str(data(jj).model.skill(4).mae*100, '%2.1f');
+            writing{jj+1,14} = num2str(data(jj).model.skill(4).bias*100, '%2.1f');
         catch
         end
-        
-        try
-            writing{jj+1,5} = num2str(data(jj).model.skill_tide.rmse*100, '%2.1f');
-        catch
-        end
-        
     end
     writing{1,1} = 'IDcode';
     writing{1,2} = 'Name';
+    
     writing{1,3} = 'RMSE [cm]';
-    writing{1,4} = 'RMSE_u [cm]';
-    writing{1,5} = 'RMSE tide [cm]';
-    writing{1,6} = 'RMSE NTR (1 - Kees) [cm]';
-    writing{1,7} = 'RMSE NTR (2 - Babak) [cm]';
-    writing{1,8} = 'RMSE HW [cm]';
-    writing{1,9} = 'RMSE WL [cm]';
-    writing{1,10} = 'MAE [cm]';
-    writing{1,11} = 'bias [cm]';
+    writing{1,4} = 'MAE [cm]';
+    writing{1,5} = 'bias [cm]';
+
     
     cd(maindir)
     cd('05_post_processing\');

@@ -4,8 +4,8 @@ close all
 clc
 
 % Settings
-destin_MAIN = 'q:\Projects\Alaska\CoMoS_AK\03_modelsetup\version007\';
-destout     = 'q:\Projects\Alaska\CoMoS_AK\04_modelruns\version007\normalruns\';
+destin_MAIN = 'q:\Projects\Alaska\CoMoS_AK\03_modelsetup\version007_slim\';
+destout     = 'q:\Projects\Alaska\CoMoS_AK\04_modelruns\version007\normalruns3\';
 
 % Variations
 WY          = [2011:2018];
@@ -28,7 +28,7 @@ for ii =1:length(WY)
     WYnow       = WY(ii); disp(['  WY', num2str(WYnow)])
     reftime     = datenum(WYnow-1,12,1);
     spinup      = 7;
-    time_start  = reftime-spinup;
+    time_start  = datenum(WYnow,1,1)-spinup;
     time_end    = datenum(WYnow+1,1,1);
     
     % Time sets
@@ -43,7 +43,7 @@ for ii =1:length(WY)
         
     % Set times in mdu
     cd(destout_TMP);
-    [succes]        = replace_text('cosmos_ak.mdu','STARTDATE', datestr(reftime, 'yyyymmdd'));
+    [succes]        = replace_text('cosmos_ak.mdu','REF_TIME', datestr(reftime, 'yyyymmdd'));
     [succes]        = replace_text('cosmos_ak.mdu','TSTART_WANTED', num2str((time_start - reftime)*dtfac) );
     [succes]        = replace_text('cosmos_ak.mdu','TEND_WANTED', num2str((time_end - reftime)*dtfac) );
     
